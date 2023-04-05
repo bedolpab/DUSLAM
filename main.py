@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pickle
 import matplotlib.pyplot as plt
 import os
 import sys
@@ -46,19 +47,28 @@ def get_calib_matrix(directory):
 
     cv2.destroyAllWindows()
 
-    return (objpoints, imgpoints)
+    with open('calib.pkl', 'wb') as f:
+        pickle.dump([objpoints, imgpoints], f)
 
 
 if __name__ == "__main__":
     vid = cv2.VideoCapture(0)
-    path = "check-imgs/GO*.jpg"
-    obj, img = get_calib_matrix(path)
-    print(obj)
-    print(img)
-    
-    
+    path = "check-imgs/GO*.jpg" 
+    try:
+        with open('calib.pkl', 'rb') as f:
+            objp, imgp = pickle.load(f)
+    except FileNotFoundError:
+        get_calib_matrix(path)
+        with open('calib.pkl', 'rb') as f:
+            objp, imgp = pickle.load(f)
 
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj, img, (1280, 720), None, None)
+    print(f'OBJ: {objp}')
+    print(f'IMG: {imgp}')
+    input("Valid (?): ")
+
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objp, imgp, (1280, 720), None, None)
+    print(ret)
+    input("validate ret")
     
     WIDTH = 1078
     HEIGHT = 578
@@ -77,17 +87,16 @@ if __name__ == "__main__":
         dst = cv2.undistort(frame, mtx, dist, None, newcameramtx)
         x, y, w, h = roi
         dst = dst[y:y+h, x:x+w]
-        print(dst) 
         kp = orb.detect(dst, None)
         kp, des = orb.compute(dst, kp)
-        for p in kp:
-            print(f'keypoint: {p.pt}')
 
         img_kp = cv2.drawKeypoints(dst, kp, None, color=(0, 255, 0), flags=0)
-        plt.scatter([k.pt[0] for k in kp], [k.pt[1] for k in kp], color='r', marker='x')
-        plt.ion()
-        plt.show()
+        plt.scatter([k.pt[0] for k in kp], [k.pt[1] for k in kp], color='green', marker='.')
+        plt.gca().xaxis.tick_top()
+        plt.gca().invert_yaxis()
+        ax.set_facecolor("black")
         plt.pause(0.01)
+        plt.cla()
 
         # Exit
         events = sdl2.ext.get_events()
