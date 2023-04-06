@@ -8,82 +8,114 @@ import glob
 import sdl2
 import sdl2.ext
 
+FRAME_SIZE = (1280, 720)
+CB_SIZE = (8, 6)
 
 
+class Dataset:
+    def __init__(self, directory):
+        self.directory = directory
+        self.paths = self.load_paths(self.directory)
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        item = f'{self.directory}/{self.paths[idx]}'
+        image = cv2.imread(item)
+
+        data = {
+            "directory": self.directory,
+            "path": item,
+            "image": image,
+            "shape": image.shape,
+            "size": image.size,
+        }
+
+        return data
+
+    def load_paths(self, folder):
+        paths = []
+        for image in os.listdir(folder):
+            if (image.endswith(".jpg")):
+                paths.append(f'{self.directory}/{image}')
+        return paths
 
 
-def get_calib_matrix(directory):
+def calibrate(dataset: Dataset, frame, cb_size):
+    chessboardSize = cb_size
+    dimensions = frame
 
-    # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
-    objp = np.zeros((6*8,3), np.float32)
-    objp[:,:2] = np.mgrid[0:8, 0:6].T.reshape(-1,2)
+    criteria = (cv2.TERM_CRITERIA_EPS +
+                cv2.TERM_CRITERIA_MAX_ITER, len(dataset), 0.001)
 
-    # Arrays to store object points and image points from all the images.
-    objpoints = [] # 3d points in real world space
-    imgpoints = [] # 2d points in image plane.
+    objp = np.zeros((chessboardSize[0] * chessboardSize[1], 3), np.float32)
+    objp[:, :2] = np.mgrid[0:chessboardSize[0],
+                           0:chessboardSize[1]].T.reshape(-1, 2)
 
-    # Make a list of calibration images
-    images = glob.glob(directory)
+    objPoints = []
+    imgPoints = []
 
-    # Step through the list and search for chessboard corners
-    for idx, fname in enumerate(images):
-        img = cv2.imread(fname)
+    for image in dataset.paths:
+        img = cv2.imread(image)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Find the chessboard corners
-        ret, corners = cv2.findChessboardCorners(gray, (8,6), None)
+        ret, corners = cv2.findChessboardCorners(gray, chessboardSize, None)
 
-        # If found, add object points, image points
         if ret == True:
-            objpoints.append(objp)
-            imgpoints.append(corners)
+            objPoints.append(objp)
+            corners = cv2.cornerSubPix(
+                gray, corners, (11, 11), (-1, -1), criteria)
+            imgPoints.append(corners)
 
-            # Draw and display the corners
-            cv2.drawChessboardCorners(img, (8,6), corners, ret)
-            #write_name = 'corners_found'+str(idx)+'.jpg'
-            #cv2.imwrite(write_name, img)
-            cv2.imshow('img', img)
-            cv2.waitKey(500)
+            cv2.drawChessboardCorners(img, chessboardSize, corners, ret)
+            cv2.imshow('image', img)
+            cv2.waitKey(50)
 
     cv2.destroyAllWindows()
 
     with open('calib.pkl', 'wb') as f:
-        pickle.dump([objpoints, imgpoints], f)
+        pickle.dump([objPoints, imgPoints], f)
 
 
 if __name__ == "__main__":
     vid = cv2.VideoCapture(0)
-    path = "check-imgs/GO*.jpg" 
+    path = "check-imgs"
+    data = Dataset(path)
     try:
         with open('calib.pkl', 'rb') as f:
             objp, imgp = pickle.load(f)
     except FileNotFoundError:
-        get_calib_matrix(path)
+        calibrate(data, FRAME_SIZE, CB_SIZE)
         with open('calib.pkl', 'rb') as f:
             objp, imgp = pickle.load(f)
 
-    print(f'OBJ: {objp}')
-    print(f'IMG: {imgp}')
-    input("Valid (?): ")
+    # Pickle file should save these parameters instead, fix
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objp, imgp, (1280, 720), None, None)
 
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objp, imgp, (1280, 720), None, None)
-    print(ret)
-    input("validate ret")
-    
-    WIDTH = 1078
-    HEIGHT = 578
+    print("Calibrated camer: ", ret)
+    print("\nCamera Matrix:\n", mtx)
+    print("\nDistortion matrix:\n", dist)
+    print("\nRotation Vectors:\n", rvecs)
+    print("\nTranslation Vecttors:\n", tvecs)
+    input()
+
+    WIDTH = 1125
+    HEIGHT = 607
     sdl2.ext.init()
     window = sdl2.ext.Window("frame", size=(WIDTH, HEIGHT))
     window.show()
 
-    orb = cv2.ORB_create()
-    
+    orb = cv2.ORB_create(3000)
+
     fig, ax = plt.subplots()
 
-    while(True):
+    while (True):
         ret, frame = vid.read()
-        h ,w = frame.shape[:2]
-        newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 1, (w,h))
+        h, w = frame.shape[:2]
+        newcameramtx, roi = cv2.getOptimalNewCameraMatrix(
+            mtx, dist, (w, h), 1, (w, h))
         dst = cv2.undistort(frame, mtx, dist, None, newcameramtx)
         x, y, w, h = roi
         dst = dst[y:y+h, x:x+w]
@@ -91,7 +123,8 @@ if __name__ == "__main__":
         kp, des = orb.compute(dst, kp)
 
         img_kp = cv2.drawKeypoints(dst, kp, None, color=(0, 255, 0), flags=0)
-        plt.scatter([k.pt[0] for k in kp], [k.pt[1] for k in kp], color='green', marker='.')
+        plt.scatter([k.pt[0] for k in kp], [k.pt[1]
+                    for k in kp], color='green', marker='.')
         plt.gca().xaxis.tick_top()
         plt.gca().invert_yaxis()
         ax.set_facecolor("black")
@@ -108,10 +141,8 @@ if __name__ == "__main__":
         windowArray[:, :, 0:3] = img_kp.swapaxes(0, 1)
         window.refresh()
 
-
-
-        if(cv2.waitKey(1) & 0xFF == ord('q')):
-           break
+        if (cv2.waitKey(1) & 0xFF == ord('q')):
+            break
 
     vid.release()
     cv2.destoryAllWindows()
